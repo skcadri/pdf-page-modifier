@@ -5,10 +5,15 @@ import threading
 import io
 import subprocess
 import platform
+import base64
+import json
+import numpy as np
 from PIL import Image, ImageTk
 import PyPDF2
 import fitz  # PyMuPDF
 import tempfile
+import requests
+from openai import OpenAI
 
 
 class PDFPageModifier:
@@ -26,6 +31,13 @@ class PDFPageModifier:
         self.selected_pages = set()
         self.total_pages = 0
         self.mode = "remove"  # "remove" or "keep"
+        
+        # LLM Integration variables
+        self.lm_studio_url = "http://127.0.0.1:1234"
+        self.openai_client = None
+        self.model_name = None  # Store the actual model name from LM Studio
+        self.example_pages = set()  # Pages selected as examples for AI similarity
+        self.ai_mode = False  # When True, show example selection UI
         
         # Create the GUI
         self.create_widgets()
@@ -90,36 +102,68 @@ class PDFPageModifier:
         self.selection_info.grid(row=3, column=0, columnspan=2, 
                                 sticky=(tk.W, tk.E), pady=(0, 10))
         
+        # AI-Powered Page Selection Section
+        ai_frame = ttk.LabelFrame(control_frame, text="🤖 AI-Powered Selection", padding="5")
+        ai_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), 
+                     pady=(0, 10))
+        
+        # LM Studio connection status
+        self.lm_status_label = ttk.Label(ai_frame, text="LM Studio: Not connected", 
+                                        foreground="red")
+        self.lm_status_label.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
+        
+        # Connect to LM Studio button
+        self.connect_lm_btn = ttk.Button(ai_frame, text="Connect to LM Studio", 
+                                        command=self.connect_to_lm_studio)
+        self.connect_lm_btn.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
+        
+        # AI Mode toggle
+        self.ai_mode_btn = ttk.Button(ai_frame, text="📚 Select Example Pages", 
+                                     command=self.toggle_ai_mode, 
+                                     state="disabled")
+        self.ai_mode_btn.grid(row=2, column=0, sticky=(tk.W, tk.E), padx=(0, 2), pady=(0, 5))
+        
+        # Find similar pages button
+        self.find_similar_btn = ttk.Button(ai_frame, text="🔍 Find Similar Pages", 
+                                          command=self.find_similar_pages, 
+                                          state="disabled")
+        self.find_similar_btn.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(2, 0), pady=(0, 5))
+        
+        # Example pages info
+        self.example_info_label = ttk.Label(ai_frame, text="Select 1-3 example pages first", 
+                                           font=("Arial", 8))
+        self.example_info_label.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
+        
         # Selection buttons
         self.select_all_btn = ttk.Button(control_frame, text="Select All Pages", 
                                         command=self.select_all_pages, 
                                         state="disabled")
-        self.select_all_btn.grid(row=4, column=0, sticky=(tk.W, tk.E), 
+        self.select_all_btn.grid(row=5, column=0, sticky=(tk.W, tk.E), 
                                 padx=(0, 5), pady=(0, 5))
         
         self.clear_selection_btn = ttk.Button(control_frame, text="Clear Selection", 
                                             command=self.clear_selection, 
                                             state="disabled")
-        self.clear_selection_btn.grid(row=4, column=1, sticky=(tk.W, tk.E), 
+        self.clear_selection_btn.grid(row=5, column=1, sticky=(tk.W, tk.E), 
                                      pady=(0, 5))
         
         # Progress bar
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(control_frame, variable=self.progress_var, 
                                            maximum=100)
-        self.progress_bar.grid(row=5, column=0, columnspan=2, sticky=(tk.W, tk.E), 
+        self.progress_bar.grid(row=6, column=0, columnspan=2, sticky=(tk.W, tk.E), 
                               pady=(10, 5))
         
         # Status label
         self.status_label = ttk.Label(control_frame, text="Ready", 
                                      foreground="green")
-        self.status_label.grid(row=6, column=0, columnspan=2, 
+        self.status_label.grid(row=7, column=0, columnspan=2, 
                               sticky=(tk.W, tk.E), pady=(0, 10))
         
         # Save button
         self.save_btn = ttk.Button(control_frame, text="Save Modified PDF", 
                                   command=self.save_pdf, state="disabled")
-        self.save_btn.grid(row=7, column=0, columnspan=2, sticky=(tk.W, tk.E))
+        self.save_btn.grid(row=8, column=0, columnspan=2, sticky=(tk.W, tk.E))
         
         # Page preview area (right side)
         preview_frame = ttk.LabelFrame(main_frame, text="Page Preview", padding="10")
@@ -160,9 +204,13 @@ class PDFPageModifier:
         instructions_text = """Instructions:
 1. Click 'Load PDF File' to select a PDF
 2. Choose mode: 'Remove Selected Pages' (red border) or 'Keep Selected Pages' (green border)
-3. Click on page thumbnails to select pages (color matches your chosen mode)
-4. Use 'Select All' or 'Clear Selection' buttons as needed
-5. Click 'Save Modified PDF' to create a new PDF based on your selection and mode"""
+3. Manual Selection: Click on page thumbnails to select pages
+4. AI-Powered Selection: 
+   • Connect to LM Studio (requires local Gemma 3 27B model)
+   • Select 1-3 example pages, then click 'Find Similar Pages'
+   • AI will automatically select pages similar to your examples
+5. Use 'Select All' or 'Clear Selection' buttons as needed
+6. Click 'Save Modified PDF' to create a new PDF based on your selection and mode"""
         
         instructions_label = ttk.Label(main_frame, text=instructions_text, 
                                       justify=tk.LEFT, font=("Arial", 9))
@@ -294,26 +342,48 @@ class PDFPageModifier:
         self.update_visual_feedback()
         
     def toggle_page_selection(self, page_idx):
-        if page_idx in self.selected_pages:
-            self.selected_pages.remove(page_idx)
+        if self.ai_mode:
+            # In AI mode, toggle example pages
+            if page_idx in self.example_pages:
+                self.example_pages.remove(page_idx)
+            else:
+                # Limit to 3 example pages for better performance
+                if len(self.example_pages) < 3:
+                    self.example_pages.add(page_idx)
+                else:
+                    messagebox.showwarning("Limit Reached", 
+                                         "Maximum 3 example pages allowed for optimal AI performance.")
+                    return
+            self.update_example_info()
         else:
-            self.selected_pages.add(page_idx)
+            # Normal mode, toggle selected pages
+            if page_idx in self.selected_pages:
+                self.selected_pages.remove(page_idx)
+            else:
+                self.selected_pages.add(page_idx)
+            self.update_selection_info()
             
         self.update_visual_feedback()
-        self.update_selection_info()
         
     def update_visual_feedback(self):
         """Update visual feedback based on current mode and selection"""
         if not self.page_thumbnails:
             return
             
-        color = "green" if self.mode == "keep" else "red"
-        
         for i, (frame, btn) in enumerate(self.page_thumbnails):
-            if i in self.selected_pages:
-                btn.config(bg=color, relief="solid")
+            if self.ai_mode:
+                # In AI mode, show example pages with blue border
+                if i in self.example_pages:
+                    btn.config(bg="lightblue", relief="solid", borderwidth=3)
+                else:
+                    btn.config(bg="white", relief="flat", borderwidth=2)
             else:
-                btn.config(bg="white", relief="flat")
+                # Normal mode, show selected pages with mode color
+                color = "green" if self.mode == "keep" else "red"
+                if i in self.selected_pages:
+                    btn.config(bg=color, relief="solid", borderwidth=3)
+                else:
+                    btn.config(bg="white", relief="flat", borderwidth=2)
         
     def select_all_pages(self):
         self.selected_pages = set(range(self.total_pages))
@@ -503,6 +573,297 @@ class PDFPageModifier:
     def update_status(self, message, color="black"):
         self.status_label.config(text=message, foreground=color)
         self.root.update_idletasks()
+    
+    # LLM Integration Methods
+    def connect_to_lm_studio(self):
+        """Connect to LM Studio and test the connection"""
+        try:
+            self.update_status("Connecting to LM Studio...", "orange")
+            
+            # Initialize OpenAI client with LM Studio URL
+            self.openai_client = OpenAI(
+                base_url=f"{self.lm_studio_url}/v1",
+                api_key="lm-studio"  # LM Studio doesn't require a real API key
+            )
+            
+            # Test connection by listing models
+            models = self.openai_client.models.list()
+            if models.data:
+                # Store the actual model name for use in API calls
+                self.model_name = models.data[0].id
+                self.lm_status_label.config(text=f"✅ Connected to: {self.model_name}", 
+                                          foreground="green")
+                self.update_status("Connected to LM Studio successfully!", "green")
+                
+                # Enable AI features
+                self.ai_mode_btn.config(state="normal")
+                self.connect_lm_btn.config(text="Reconnect to LM Studio")
+                
+                messagebox.showinfo("Success", 
+                    f"Successfully connected to LM Studio!\n"
+                    f"Model: {self.model_name}\n"
+                    f"You can now use AI-powered page selection.")
+            else:
+                raise Exception("No models found in LM Studio")
+                
+        except Exception as e:
+            self.lm_status_label.config(text="❌ Connection failed", foreground="red")
+            self.update_status("Failed to connect to LM Studio", "red")
+            messagebox.showerror("Connection Failed", 
+                f"Could not connect to LM Studio at {self.lm_studio_url}\n\n"
+                f"Error: {str(e)}\n\n"
+                f"Please ensure:\n"
+                f"• LM Studio is running\n"
+                f"• A vision-capable model (like Gemma 3 27B) is loaded\n"
+                f"• The local server is started on port 1234")
+    
+    def toggle_ai_mode(self):
+        """Toggle between normal selection and AI example selection mode"""
+        if not self.openai_client:
+            messagebox.showwarning("Not Connected", 
+                "Please connect to LM Studio first before using AI features.")
+            return
+            
+        self.ai_mode = not self.ai_mode
+        
+        if self.ai_mode:
+            # Entering AI mode
+            self.ai_mode_btn.config(text="📝 Normal Selection")
+            self.example_pages.clear()
+            self.update_example_info()
+            messagebox.showinfo("AI Mode", 
+                "AI Example Mode activated!\n\n"
+                "Click on 1-3 pages that represent the type of pages you want to find.\n"
+                "Then click 'Find Similar Pages' to let AI select similar pages automatically.")
+        else:
+            # Exiting AI mode
+            self.ai_mode_btn.config(text="📚 Select Example Pages")
+            self.example_pages.clear()
+            self.update_example_info()
+        
+        self.update_visual_feedback()
+        self.update_find_similar_button()
+    
+    def update_example_info(self):
+        """Update the example pages information display"""
+        if self.example_pages:
+            pages_list = sorted(list(self.example_pages))
+            pages_str = ", ".join([str(p+1) for p in pages_list])
+            self.example_info_label.config(text=f"Example pages: {pages_str}")
+        else:
+            self.example_info_label.config(text="Select 1-3 example pages first")
+        
+        self.update_find_similar_button()
+    
+    def update_find_similar_button(self):
+        """Enable/disable find similar button based on example selection"""
+        if self.ai_mode and self.example_pages and self.openai_client:
+            self.find_similar_btn.config(state="normal")
+        else:
+            self.find_similar_btn.config(state="disabled")
+    
+    def image_to_base64(self, image):
+        """Convert PIL Image to base64 string for API"""
+        buffer = io.BytesIO()
+        # Resize image to reduce API payload size
+        image_copy = image.copy()
+        image_copy.thumbnail((800, 1200), Image.Resampling.LANCZOS)
+        image_copy.save(buffer, format='JPEG', quality=85)
+        img_str = base64.b64encode(buffer.getvalue()).decode()
+        return img_str
+    
+    def analyze_page_with_llm(self, page_image):
+        """Analyze a single page using the LLM to extract features"""
+        try:
+            # Convert image to base64
+            image_base64 = self.image_to_base64(page_image)
+            
+            # Prepare the prompt for page analysis
+            prompt = """Analyze this document page image and describe its key visual characteristics in 2-3 sentences. Focus on:
+- Layout: single/multi-column, headers, spacing
+- Content: text density, images, lists, tables
+- Style: font sizes, formatting, visual elements
+
+Be concise and focus on patterns that help identify similar pages."""
+
+            # Use LM Studio compatible format
+            response = self.openai_client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=200,
+                temperature=0.1
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            # Show error in GUI status
+            self.update_status(f"AI Error: {str(e)}", "red")
+            return None
+    
+    def compare_pages_with_llm(self, example_descriptions, candidate_image):
+        """Compare a candidate page with example pages using LLM"""
+        try:
+            # Convert candidate image to base64
+            candidate_base64 = self.image_to_base64(candidate_image)
+            
+            # Create comparison prompt
+            example_text = "\n".join([f"Example {i+1}: {desc}" for i, desc in enumerate(example_descriptions)])
+            
+            prompt = f"""Compare this page to the examples:
+
+{example_text}
+
+Does this page have similar layout, content type, and visual style? Answer only "YES" or "NO"."""
+
+            # Use LM Studio compatible format
+            response = self.openai_client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{candidate_base64}"}
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=10,
+                temperature=0.0
+            )
+            
+            result = response.choices[0].message.content.strip().upper()
+            return "YES" in result
+            
+        except Exception as e:
+            self.update_status(f"AI Compare Error: {str(e)}", "red")
+            return False
+    
+    def find_similar_pages_worker(self, progress_callback, result_callback):
+        """Worker thread for AI analysis to prevent GUI freezing"""
+        try:
+            # Analyze example pages first
+            example_descriptions = []
+            total_operations = len(self.example_pages) + (self.total_pages - len(self.example_pages))
+            current_operation = 0
+            
+            progress_callback("Analyzing example pages...", 0)
+            
+            for page_idx in sorted(self.example_pages):
+                description = self.analyze_page_with_llm(self.page_images[page_idx])
+                if description:
+                    example_descriptions.append(description)
+                else:
+                    result_callback(False, "Failed to analyze example pages. Check LM Studio connection.")
+                    return
+                    
+                current_operation += 1
+                progress = (current_operation / total_operations) * 100
+                progress_callback("Analyzing example pages...", progress)
+            
+            if not example_descriptions:
+                result_callback(False, "No example descriptions generated.")
+                return
+            
+            # Compare all other pages with examples
+            similar_pages = set(self.example_pages)  # Include the examples themselves
+            progress_callback("Finding similar pages...", (current_operation / total_operations) * 100)
+            
+            for page_idx in range(self.total_pages):
+                if page_idx not in self.example_pages:
+                    is_similar = self.compare_pages_with_llm(
+                        example_descriptions, 
+                        self.page_images[page_idx]
+                    )
+                    
+                    if is_similar:
+                        similar_pages.add(page_idx)
+                    
+                    current_operation += 1
+                    progress = (current_operation / total_operations) * 100
+                    progress_callback("Finding similar pages...", progress)
+            
+            result_callback(True, similar_pages)
+            
+        except Exception as e:
+            result_callback(False, f"AI analysis error: {str(e)}")
+    
+    def find_similar_pages(self):
+        """Use LLM to find pages similar to the selected examples"""
+        if not self.example_pages:
+            messagebox.showwarning("No Examples", "Please select 1-3 example pages first.")
+            return
+            
+        if not self.openai_client:
+            messagebox.showwarning("Not Connected", "Please connect to LM Studio first.")
+            return
+        
+        if not hasattr(self, 'model_name'):
+            messagebox.showerror("Model Error", "No model name detected. Please reconnect to LM Studio.")
+            return
+        
+        # Disable the button during processing
+        self.find_similar_btn.config(state="disabled")
+        
+        def progress_callback(status, progress):
+            """Update GUI progress from worker thread"""
+            self.root.after(0, lambda: self.update_status(status, "orange"))
+            self.root.after(0, lambda: self.progress_var.set(progress))
+        
+        def result_callback(success, result):
+            """Handle results from worker thread"""
+            def update_gui():
+                if success:
+                    # Exit AI mode and apply the results
+                    self.ai_mode = False
+                    self.ai_mode_btn.config(text="📚 Select Example Pages")
+                    self.example_pages.clear()
+                    self.update_example_info()
+                    
+                    # Apply the similar pages as selection
+                    self.selected_pages = result
+                    self.update_visual_feedback()
+                    self.update_selection_info()
+                    
+                    self.progress_var.set(100)
+                    self.update_status("AI analysis completed!", "green")
+                    
+                    # Show results
+                    messagebox.showinfo("AI Analysis Complete", 
+                        f"Found {len(result)} similar pages out of {self.total_pages} total pages.\n\n"
+                        f"The AI has automatically selected pages with similar visual structure "
+                        f"and content patterns to your examples.\n\n"
+                        f"You can now review the selection and save your modified PDF.")
+                else:
+                    self.update_status("AI analysis failed", "red")
+                    messagebox.showerror("Analysis Error", result)
+                
+                # Re-enable the button
+                self.find_similar_btn.config(state="normal")
+            
+            self.root.after(0, update_gui)
+        
+        # Start worker thread
+        worker_thread = threading.Thread(
+            target=self.find_similar_pages_worker,
+            args=(progress_callback, result_callback),
+            daemon=True
+        )
+        worker_thread.start()
 
 
 def main():

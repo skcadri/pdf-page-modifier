@@ -12,11 +12,16 @@ A powerful desktop application for PDF page management with dual-mode functional
 - **📄 Load PDF Files**: Open any PDF file through a file browser dialog
 - **🖼️ Visual Page Preview**: High-quality thumbnail previews of all PDF pages
 - **🎨 Color-Coded Selection**: Visual feedback with red/green borders based on mode
+- **🤖 AI-Powered Page Selection**: Revolutionary computer vision feature
+  - **Local LLM Integration**: Connect to LM Studio with vision models (Gemma 3 27B, LLaVA, etc.)
+  - **Example-Based Selection**: Select 1-3 example pages, AI finds all similar pages automatically
+  - **Smart Pattern Recognition**: Perfect for removing repetitive layouts, headers, or document sections
+  - **Privacy-First**: All AI processing happens locally on your machine
 - **⚡ Batch Operations**: Select all pages or clear selection with dedicated buttons
 - **📊 Progress Tracking**: Real-time progress bar and status updates during operations
 - **💾 Smart Export**: Save modified PDFs with intelligent operation summaries
 - **🚀 Instant Access**: Open created PDFs immediately or show in file explorer
-- **🔧 No External Dependencies**: Pure Python solution with no additional software required
+- **🔧 Flexible Dependencies**: Core features work standalone, AI features require LM Studio
 
 ## Requirements
 
@@ -89,7 +94,15 @@ A powerful desktop application for PDF page management with dual-mode functional
    - Use "Select All Pages" to select all pages
    - Use "Clear Selection" to deselect all pages
 
-4. **Save and access your PDF**:
+4. **🤖 Optional: Use AI-Powered Selection**:
+   - **Set up LM Studio** with a vision model (see [AI Setup Guide](AI_SETUP_GUIDE.md))
+   - Click "Connect to LM Studio" to establish connection
+   - Click "📚 Select Example Pages" to enter AI mode
+   - Select 1-3 pages that represent the type you want to find
+   - Click "🔍 Find Similar Pages" - AI will automatically select similar pages
+   - Review and adjust the selection if needed
+
+5. **Save and access your PDF**:
    - Click "Save Modified PDF" button
    - Choose a location and filename for the new PDF
    - **Instantly open** the created PDF with the "📂 Open PDF" button
@@ -104,6 +117,11 @@ A powerful desktop application for PDF page management with dual-mode functional
   - **Load PDF File** button
   - **File information** display (filename and page count)
   - **Mode selection** radio buttons (Remove/Keep)
+  - **🤖 AI-Powered Selection** section:
+    - **LM Studio connection** status and connect button
+    - **"Select Example Pages"** mode toggle (blue borders for examples)
+    - **"Find Similar Pages"** AI analysis button
+    - **Example pages info** display
   - **Page selection information** with dynamic text based on mode
   - **Select All/Clear Selection** buttons
   - **Progress bar** and status display
