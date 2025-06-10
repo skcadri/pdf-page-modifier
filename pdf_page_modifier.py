@@ -39,6 +39,8 @@ class PDFPageModifier:
         self.smart_selector = SmartSelector() if SMART_SELECTION_AVAILABLE else None
         self.smart_selection_active = False
         self.example_pages = set()  # Pages selected as examples for smart selection
+        self.analysis_complete = False  # Track if initial analysis is done
+        self.last_example_pages = None  # Store last example pages for dynamic threshold
         
         # Create the GUI
         self.create_widgets()
@@ -207,23 +209,26 @@ class PDFPageModifier:
         self.smart_selection_frame = ttk.LabelFrame(control_frame, text="🧠 Smart Selection", padding="5")
         self.smart_selection_frame.grid(row=8, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
         
-        # Selection method toggle
-        method_frame = ttk.Frame(self.smart_selection_frame)
-        method_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
+        # Smart selection toggle
+        toggle_frame = ttk.Frame(self.smart_selection_frame)
+        toggle_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
         
-        self.selection_method_var = tk.StringVar(value="manual")
+        self.smart_selection_var = tk.BooleanVar(value=False)
+        self.smart_toggle = ttk.Checkbutton(toggle_frame, text="Enable Smart Selection", 
+                                           variable=self.smart_selection_var, 
+                                           command=self.on_smart_selection_toggle)
+        self.smart_toggle.pack(side=tk.LEFT)
         
-        ttk.Radiobutton(method_frame, text="Manual", variable=self.selection_method_var, 
-                       value="manual", command=self.on_selection_method_change).pack(side=tk.LEFT)
-        ttk.Radiobutton(method_frame, text="Smart", variable=self.selection_method_var, 
-                       value="smart", command=self.on_selection_method_change).pack(side=tk.LEFT, padx=(10, 0))
+        # Container for smart selection controls (will be shown/hidden)
+        self.smart_controls_frame = ttk.Frame(self.smart_selection_frame)
+        self.smart_controls_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E))
         
         # Quick presets
-        preset_label = ttk.Label(self.smart_selection_frame, text="Quick Presets:", font=("Arial", 9, "bold"))
-        preset_label.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(5, 2))
+        preset_label = ttk.Label(self.smart_controls_frame, text="Quick Presets:", font=("Arial", 9, "bold"))
+        preset_label.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(5, 2))
         
-        preset_frame1 = ttk.Frame(self.smart_selection_frame)
-        preset_frame1.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=2)
+        preset_frame1 = ttk.Frame(self.smart_controls_frame)
+        preset_frame1.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=2)
         
         # First row of presets
         self.preset_blank_btn = ttk.Button(preset_frame1, text="Blank Pages", width=10,
@@ -238,8 +243,8 @@ class PDFPageModifier:
                                           command=lambda: self.smart_select_preset("title"))
         self.preset_title_btn.pack(side=tk.LEFT, padx=2)
         
-        preset_frame2 = ttk.Frame(self.smart_selection_frame)
-        preset_frame2.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=2)
+        preset_frame2 = ttk.Frame(self.smart_controls_frame)
+        preset_frame2.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=2)
         
         # Second row of presets
         self.preset_text_btn = ttk.Button(preset_frame2, text="Text Heavy", width=10,
@@ -261,12 +266,12 @@ class PDFPageModifier:
         ]
         
         # Example-based selection (main feature)
-        example_label = ttk.Label(self.smart_selection_frame, text="🎯 AI-Powered Example-Based Selection", 
+        example_label = ttk.Label(self.smart_controls_frame, text="🎯 AI-Powered Example-Based Selection", 
                                  font=("Arial", 10, "bold"), foreground="darkblue")
-        example_label.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(15, 5))
+        example_label.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(15, 5))
         
         # Enhanced instructions
-        example_info = ttk.Label(self.smart_selection_frame, 
+        example_info = ttk.Label(self.smart_controls_frame, 
                                text="Advanced ML Analysis:\n" +
                                     "• Text distribution patterns\n" +
                                     "• Layout structure analysis\n" +
@@ -276,16 +281,16 @@ class PDFPageModifier:
                                     "1. Select 1-3 example pages manually\n" +
                                     "2. Click 'Find Similar' for AI analysis", 
                                font=("Arial", 8), foreground="darkgreen", justify=tk.LEFT)
-        example_info.grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(0, 8))
+        example_info.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(0, 8))
         
         # Enhanced find similar button
-        self.find_similar_btn = ttk.Button(self.smart_selection_frame, text="🤖 Find Similar Pages (AI Analysis)",
+        self.find_similar_btn = ttk.Button(self.smart_controls_frame, text="🤖 Find Similar Pages (AI Analysis)",
                                           command=self.find_similar_pages, state="disabled")
-        self.find_similar_btn.grid(row=6, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=3)
+        self.find_similar_btn.grid(row=5, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=3)
         
         # Similarity threshold control
-        threshold_frame = ttk.Frame(self.smart_selection_frame)
-        threshold_frame.grid(row=7, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=3)
+        threshold_frame = ttk.Frame(self.smart_controls_frame)
+        threshold_frame.grid(row=6, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=3)
         
         ttk.Label(threshold_frame, text="Similarity Threshold:", font=("Arial", 8)).pack(side=tk.LEFT)
         self.similarity_threshold = tk.DoubleVar(value=0.75)
@@ -295,22 +300,25 @@ class PDFPageModifier:
         self.threshold_label = ttk.Label(threshold_frame, text="75%", font=("Arial", 8))
         self.threshold_label.pack(side=tk.LEFT)
         
-        # Update threshold label when scale changes
-        def update_threshold_label(*args):
+        # Update threshold label and dynamically update selection when scale changes
+        def update_threshold_and_selection(*args):
             self.threshold_label.config(text=f"{int(self.similarity_threshold.get() * 100)}%")
-        self.similarity_threshold.trace('w', update_threshold_label)
+            # If analysis is complete and we have example pages, update selection dynamically
+            if self.analysis_complete and self.last_example_pages:
+                self.update_dynamic_threshold_selection()
+        self.similarity_threshold.trace('w', update_threshold_and_selection)
         
         # Smart selection info
-        self.smart_info_label = ttk.Label(self.smart_selection_frame, text="", font=("Arial", 8), foreground="blue")
-        self.smart_info_label.grid(row=8, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
+        self.smart_info_label = ttk.Label(self.smart_controls_frame, text="", font=("Arial", 8), foreground="blue")
+        self.smart_info_label.grid(row=7, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
         
         # Clear smart selection button
-        self.clear_smart_btn = ttk.Button(self.smart_selection_frame, text="🔄 Clear Smart Selection",
+        self.clear_smart_btn = ttk.Button(self.smart_controls_frame, text="🔄 Clear Smart Selection",
                                          command=self.clear_smart_selection, state="disabled")
-        self.clear_smart_btn.grid(row=9, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
+        self.clear_smart_btn.grid(row=8, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
         
-        # Initially disable smart selection UI
-        self.toggle_smart_selection_ui(False)
+        # Initially hide smart selection controls
+        self.smart_controls_frame.grid_remove()
         
     def load_pdf(self):
         file_path = filedialog.askopenfilename(
@@ -376,9 +384,9 @@ class PDFPageModifier:
             self.clear_selection_btn.config(state="normal")
             self.save_btn.config(state="normal")
             
-            # Enable smart selection UI if available
-            if SMART_SELECTION_AVAILABLE and self.smart_selector:
-                self.toggle_smart_selection_ui(self.smart_selection_active)
+            # Enable smart selection UI if available and toggle is on
+            if SMART_SELECTION_AVAILABLE and self.smart_selector and self.smart_selection_active:
+                self.toggle_smart_selection_ui(True)
             
         except Exception as e:
             self.update_status(f"Error loading PDF: {str(e)}", "red")
@@ -467,12 +475,21 @@ class PDFPageModifier:
     def update_selection_info(self):
         if self.selected_pages:
             pages_list = sorted(list(self.selected_pages))
-            pages_str = ", ".join([str(p+1) for p in pages_list])
+            pages_str_list = [str(p+1) for p in pages_list]
+            
+            # Wrap page numbers to new lines if there are many (more than 10 per line)
+            max_pages_per_line = 10
+            wrapped_lines = []
+            for i in range(0, len(pages_str_list), max_pages_per_line):
+                line_pages = pages_str_list[i:i+max_pages_per_line]
+                wrapped_lines.append(", ".join(line_pages))
+            
+            pages_str = "\n".join(wrapped_lines)
             
             if self.mode == "keep":
-                self.selection_info.config(text=f"Pages to keep: {pages_str}")
+                self.selection_info.config(text=f"Pages to keep:\n{pages_str}")
             else:
-                self.selection_info.config(text=f"Pages to remove: {pages_str}")
+                self.selection_info.config(text=f"Pages to remove:\n{pages_str}")
         else:
             if self.mode == "keep":
                 self.selection_info.config(text="Pages to keep: None selected")
@@ -480,14 +497,21 @@ class PDFPageModifier:
                 self.selection_info.config(text="Pages to remove: None selected")
     
     # Smart Selection Methods
-    def on_selection_method_change(self):
-        """Handle change between manual and smart selection"""
-        is_smart = self.selection_method_var.get() == "smart"
-        self.smart_selection_active = is_smart
-        self.toggle_smart_selection_ui(is_smart)
+    def on_smart_selection_toggle(self):
+        """Handle smart selection toggle on/off"""
+        is_enabled = self.smart_selection_var.get()
+        self.smart_selection_active = is_enabled
         
-        if not is_smart:
-            # Clear smart selection when switching to manual
+        if is_enabled:
+            # Show smart selection controls
+            self.smart_controls_frame.grid()
+            # Enable smart selection UI if PDF is loaded
+            if self.pdf_path:
+                self.toggle_smart_selection_ui(True)
+        else:
+            # Hide smart selection controls
+            self.smart_controls_frame.grid_remove()
+            # Clear smart selection when disabling
             self.clear_smart_selection()
     
     def toggle_smart_selection_ui(self, enabled):
@@ -556,6 +580,53 @@ class PDFPageModifier:
         except Exception as e:
             self.root.after(0, lambda: self.update_status(f"Smart selection error: {str(e)}", "red"))
     
+    def update_dynamic_threshold_selection(self):
+        """Update selection dynamically as threshold changes"""
+        if not self.smart_selector or not self.last_example_pages:
+            return
+        
+        threshold = self.similarity_threshold.get()
+        
+        # Run in background thread without showing status (for smoother experience)
+        threading.Thread(target=self._run_dynamic_threshold_update, 
+                        args=(self.last_example_pages, threshold), daemon=True).start()
+    
+    def _run_dynamic_threshold_update(self, example_pages, threshold):
+        """Run dynamic threshold update in background"""
+        try:
+            result = self.smart_selector.find_similar_pages(example_pages, threshold)
+            self.root.after(0, self._apply_dynamic_threshold_result, result, example_pages)
+        except Exception as e:
+            # Silently handle errors during dynamic updates
+            pass
+    
+    def _apply_dynamic_threshold_result(self, result, example_pages):
+        """Apply dynamic threshold result without overriding status"""
+        try:
+            # Clear current selection and restore example pages plus new similar pages
+            self.selected_pages.clear()
+            self.selected_pages.update(example_pages)  # Keep example pages
+            if result.selected_pages:
+                self.selected_pages.update(result.selected_pages)  # Add similar pages
+            
+            # Update visual feedback
+            self.update_visual_feedback()
+            self.update_selection_info()
+            
+            # Update info label
+            if result.selected_pages:
+                avg_confidence = sum(result.confidence_scores) / len(result.confidence_scores) if result.confidence_scores else 0
+                info_text = (f"🤖 AI Found: {len(result.selected_pages)} pages\n"
+                           f"Confidence: {avg_confidence:.0%} avg\n"
+                           f"Threshold: {int(self.similarity_threshold.get() * 100)}%")
+                self.smart_info_label.config(text=info_text)
+            else:
+                self.smart_info_label.config(text=f"🤖 No matches at {int(self.similarity_threshold.get() * 100)}% threshold")
+                
+        except Exception as e:
+            # Silently handle errors during dynamic updates
+            pass
+    
     def find_similar_pages(self):
         """Find pages similar to currently selected examples using advanced AI analysis"""
         if not self.smart_selector or not self.selected_pages:
@@ -563,6 +634,7 @@ class PDFPageModifier:
             return
         
         example_pages = list(self.selected_pages)
+        self.last_example_pages = example_pages  # Store for dynamic threshold updates
         threshold = self.similarity_threshold.get()
         
         self.update_status(f"Running advanced AI analysis (threshold: {int(threshold*100)}%)...", "orange")
@@ -595,6 +667,9 @@ class PDFPageModifier:
     def _apply_smart_selection_result(self, result: 'SelectionResult'):
         """Apply smart selection result to UI with enhanced feedback"""
         try:
+            # Mark analysis as complete for dynamic threshold updates
+            self.analysis_complete = True
+            
             if result.selected_pages:
                 # Keep example pages and add similar pages (don't clear examples)
                 # The result.selected_pages already excludes the examples, so we just add them
@@ -629,8 +704,10 @@ class PDFPageModifier:
             self.update_status(f"Error applying AI analysis results: {str(e)}", "red")
     
     def clear_smart_selection(self):
-        """Clear smart selection and return to manual mode"""
+        """Clear smart selection and reset analysis state"""
         self.selected_pages.clear()
+        self.analysis_complete = False
+        self.last_example_pages = None
         self.update_visual_feedback()
         self.update_selection_info()
         self.smart_info_label.config(text="")
