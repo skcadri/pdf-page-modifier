@@ -10,6 +10,14 @@ import PyPDF2
 import fitz  # PyMuPDF
 import tempfile
 
+# Import Smart Selection functionality
+try:
+    from smart_selector import SmartSelector, ContentType, SelectionResult
+    SMART_SELECTION_AVAILABLE = True
+except ImportError as e:
+    print(f"Smart Selection not available: {e}")
+    SMART_SELECTION_AVAILABLE = False
+
 
 class PDFPageModifier:
     def __init__(self, root):
@@ -26,6 +34,11 @@ class PDFPageModifier:
         self.selected_pages = set()
         self.total_pages = 0
         self.mode = "remove"  # "remove" or "keep"
+        
+        # Smart Selection variables
+        self.smart_selector = SmartSelector() if SMART_SELECTION_AVAILABLE else None
+        self.smart_selection_active = False
+        self.example_pages = set()  # Pages selected as examples for smart selection
         
         # Create the GUI
         self.create_widgets()
@@ -121,6 +134,9 @@ class PDFPageModifier:
                                   command=self.save_pdf, state="disabled")
         self.save_btn.grid(row=7, column=0, columnspan=2, sticky=(tk.W, tk.E))
         
+        # Smart Selection panel (will be created after scrollable_frame)
+        self.smart_selection_frame = None
+        
         # Page preview area (right side)
         preview_frame = ttk.LabelFrame(main_frame, text="Page Preview", padding="10")
         preview_frame.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -169,6 +185,10 @@ class PDFPageModifier:
         instructions_label.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), 
                                pady=(10, 0))
         
+        # Create Smart Selection panel after all other widgets are created
+        if SMART_SELECTION_AVAILABLE:
+            self.create_smart_selection_ui(control_frame)
+        
     def on_canvas_configure(self, event):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         
@@ -180,6 +200,117 @@ class PDFPageModifier:
         self.mode = self.mode_var.get()
         self.update_visual_feedback()
         self.update_selection_info()
+    
+    def create_smart_selection_ui(self, control_frame):
+        """Create Smart Selection UI components"""
+        # Smart selection frame
+        self.smart_selection_frame = ttk.LabelFrame(control_frame, text="🧠 Smart Selection", padding="5")
+        self.smart_selection_frame.grid(row=8, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
+        
+        # Selection method toggle
+        method_frame = ttk.Frame(self.smart_selection_frame)
+        method_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
+        
+        self.selection_method_var = tk.StringVar(value="manual")
+        
+        ttk.Radiobutton(method_frame, text="Manual", variable=self.selection_method_var, 
+                       value="manual", command=self.on_selection_method_change).pack(side=tk.LEFT)
+        ttk.Radiobutton(method_frame, text="Smart", variable=self.selection_method_var, 
+                       value="smart", command=self.on_selection_method_change).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Quick presets
+        preset_label = ttk.Label(self.smart_selection_frame, text="Quick Presets:", font=("Arial", 9, "bold"))
+        preset_label.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(5, 2))
+        
+        preset_frame1 = ttk.Frame(self.smart_selection_frame)
+        preset_frame1.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=2)
+        
+        # First row of presets
+        self.preset_blank_btn = ttk.Button(preset_frame1, text="Blank Pages", width=10,
+                                          command=lambda: self.smart_select_preset("blank"))
+        self.preset_blank_btn.pack(side=tk.LEFT, padx=(0, 2))
+        
+        self.preset_table_btn = ttk.Button(preset_frame1, text="Tables", width=10,
+                                          command=lambda: self.smart_select_preset("table"))
+        self.preset_table_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.preset_title_btn = ttk.Button(preset_frame1, text="Title Pages", width=10,
+                                          command=lambda: self.smart_select_preset("title"))
+        self.preset_title_btn.pack(side=tk.LEFT, padx=2)
+        
+        preset_frame2 = ttk.Frame(self.smart_selection_frame)
+        preset_frame2.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=2)
+        
+        # Second row of presets
+        self.preset_text_btn = ttk.Button(preset_frame2, text="Text Heavy", width=10,
+                                         command=lambda: self.smart_select_preset("text_heavy"))
+        self.preset_text_btn.pack(side=tk.LEFT, padx=(0, 2))
+        
+        self.preset_image_btn = ttk.Button(preset_frame2, text="Images", width=10,
+                                          command=lambda: self.smart_select_preset("image_heavy"))
+        self.preset_image_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.preset_mixed_btn = ttk.Button(preset_frame2, text="Mixed", width=10,
+                                          command=lambda: self.smart_select_preset("mixed"))
+        self.preset_mixed_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Store preset buttons for easy access
+        self.preset_buttons = [
+            self.preset_blank_btn, self.preset_table_btn, self.preset_title_btn,
+            self.preset_text_btn, self.preset_image_btn, self.preset_mixed_btn
+        ]
+        
+        # Example-based selection (main feature)
+        example_label = ttk.Label(self.smart_selection_frame, text="🎯 AI-Powered Example-Based Selection", 
+                                 font=("Arial", 10, "bold"), foreground="darkblue")
+        example_label.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(15, 5))
+        
+        # Enhanced instructions
+        example_info = ttk.Label(self.smart_selection_frame, 
+                               text="Advanced ML Analysis:\n" +
+                                    "• Text distribution patterns\n" +
+                                    "• Layout structure analysis\n" +
+                                    "• Visual complexity matching\n" +
+                                    "• Content hierarchy detection\n\n" +
+                                    "How to use:\n" +
+                                    "1. Select 1-3 example pages manually\n" +
+                                    "2. Click 'Find Similar' for AI analysis", 
+                               font=("Arial", 8), foreground="darkgreen", justify=tk.LEFT)
+        example_info.grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(0, 8))
+        
+        # Enhanced find similar button
+        self.find_similar_btn = ttk.Button(self.smart_selection_frame, text="🤖 Find Similar Pages (AI Analysis)",
+                                          command=self.find_similar_pages, state="disabled")
+        self.find_similar_btn.grid(row=6, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=3)
+        
+        # Similarity threshold control
+        threshold_frame = ttk.Frame(self.smart_selection_frame)
+        threshold_frame.grid(row=7, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=3)
+        
+        ttk.Label(threshold_frame, text="Similarity Threshold:", font=("Arial", 8)).pack(side=tk.LEFT)
+        self.similarity_threshold = tk.DoubleVar(value=0.75)
+        threshold_scale = ttk.Scale(threshold_frame, from_=0.3, to=0.95, variable=self.similarity_threshold, 
+                                   orient=tk.HORIZONTAL, length=120)
+        threshold_scale.pack(side=tk.LEFT, padx=(5, 5))
+        self.threshold_label = ttk.Label(threshold_frame, text="75%", font=("Arial", 8))
+        self.threshold_label.pack(side=tk.LEFT)
+        
+        # Update threshold label when scale changes
+        def update_threshold_label(*args):
+            self.threshold_label.config(text=f"{int(self.similarity_threshold.get() * 100)}%")
+        self.similarity_threshold.trace('w', update_threshold_label)
+        
+        # Smart selection info
+        self.smart_info_label = ttk.Label(self.smart_selection_frame, text="", font=("Arial", 8), foreground="blue")
+        self.smart_info_label.grid(row=8, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
+        
+        # Clear smart selection button
+        self.clear_smart_btn = ttk.Button(self.smart_selection_frame, text="🔄 Clear Smart Selection",
+                                         command=self.clear_smart_selection, state="disabled")
+        self.clear_smart_btn.grid(row=9, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
+        
+        # Initially disable smart selection UI
+        self.toggle_smart_selection_ui(False)
         
     def load_pdf(self):
         file_path = filedialog.askopenfilename(
@@ -245,6 +376,10 @@ class PDFPageModifier:
             self.clear_selection_btn.config(state="normal")
             self.save_btn.config(state="normal")
             
+            # Enable smart selection UI if available
+            if SMART_SELECTION_AVAILABLE and self.smart_selector:
+                self.toggle_smart_selection_ui(self.smart_selection_active)
+            
         except Exception as e:
             self.update_status(f"Error loading PDF: {str(e)}", "red")
             messagebox.showerror("Error", f"Failed to load PDF: {str(e)}")
@@ -302,6 +437,10 @@ class PDFPageModifier:
         self.update_visual_feedback()
         self.update_selection_info()
         
+        # Update smart selection UI state
+        if SMART_SELECTION_AVAILABLE and self.smart_selector:
+            self.toggle_smart_selection_ui(self.smart_selection_active)
+        
     def update_visual_feedback(self):
         """Update visual feedback based on current mode and selection"""
         if not self.page_thumbnails:
@@ -339,6 +478,164 @@ class PDFPageModifier:
                 self.selection_info.config(text="Pages to keep: None selected")
             else:
                 self.selection_info.config(text="Pages to remove: None selected")
+    
+    # Smart Selection Methods
+    def on_selection_method_change(self):
+        """Handle change between manual and smart selection"""
+        is_smart = self.selection_method_var.get() == "smart"
+        self.smart_selection_active = is_smart
+        self.toggle_smart_selection_ui(is_smart)
+        
+        if not is_smart:
+            # Clear smart selection when switching to manual
+            self.clear_smart_selection()
+    
+    def toggle_smart_selection_ui(self, enabled):
+        """Enable/disable smart selection UI components"""
+        if not SMART_SELECTION_AVAILABLE or not hasattr(self, 'smart_selection_frame'):
+            return
+            
+        # Enable/disable buttons based on PDF loaded state and smart mode
+        pdf_loaded = self.pdf_path is not None
+        has_selection = len(self.selected_pages) > 0
+        
+        # Preset buttons
+        preset_state = "normal" if enabled and pdf_loaded else "disabled"
+        if hasattr(self, 'preset_buttons'):
+            for button in self.preset_buttons:
+                button.config(state=preset_state)
+        
+        # Find similar button
+        if hasattr(self, 'find_similar_btn'):
+            self.find_similar_btn.config(state="normal" if enabled and pdf_loaded and has_selection else "disabled")
+        
+        # Clear smart selection button
+        if hasattr(self, 'clear_smart_btn'):
+            self.clear_smart_btn.config(state="normal" if enabled and pdf_loaded else "disabled")
+    
+    def smart_select_preset(self, content_type_str):
+        """Select pages based on content type preset"""
+        if not self.smart_selector or not self.pdf_path:
+            return
+        
+        # Map preset strings to ContentType enum
+        content_type_map = {
+            "blank": ContentType.BLANK,
+            "table": ContentType.TABLE,
+            "title": ContentType.TITLE,
+            "text_heavy": ContentType.TEXT_HEAVY,
+            "image_heavy": ContentType.IMAGE_HEAVY,
+            "mixed": ContentType.MIXED
+        }
+        
+        content_type = content_type_map.get(content_type_str)
+        if not content_type:
+            return
+        
+        # Run smart selection in background thread
+        self.update_status("Analyzing pages...", "orange")
+        threading.Thread(target=self._run_smart_preset_selection, 
+                        args=(content_type,), daemon=True).start()
+    
+    def _run_smart_preset_selection(self, content_type):
+        """Run smart preset selection in background thread"""
+        try:
+            # Ensure document is analyzed
+            if not self.smart_selector.analysis_complete:
+                success = self.smart_selector.analyze_document(self.pdf_path, self.page_images)
+                if not success:
+                    self.update_status("Failed to analyze document", "red")
+                    return
+            
+            # Find pages by content type
+            result = self.smart_selector.find_pages_by_content_type(content_type)
+            
+            # Update UI in main thread
+            self.root.after(0, self._apply_smart_selection_result, result)
+            
+        except Exception as e:
+            self.root.after(0, lambda: self.update_status(f"Smart selection error: {str(e)}", "red"))
+    
+    def find_similar_pages(self):
+        """Find pages similar to currently selected examples using advanced AI analysis"""
+        if not self.smart_selector or not self.selected_pages:
+            messagebox.showwarning("No Examples", "Please select at least one example page first.")
+            return
+        
+        example_pages = list(self.selected_pages)
+        threshold = self.similarity_threshold.get()
+        
+        self.update_status(f"Running advanced AI analysis (threshold: {int(threshold*100)}%)...", "orange")
+        
+        # Run in background thread
+        threading.Thread(target=self._run_similar_pages_search, 
+                        args=(example_pages, threshold), daemon=True).start()
+    
+    def _run_similar_pages_search(self, example_pages, threshold=0.7):
+        """Run similar pages search in background thread with advanced AI analysis"""
+        try:
+            # Ensure document is analyzed
+            if not self.smart_selector.analysis_complete:
+                self.root.after(0, lambda: self.update_status("Analyzing document structure...", "orange"))
+                success = self.smart_selector.analyze_document(self.pdf_path, self.page_images)
+                if not success:
+                    self.root.after(0, lambda: self.update_status("Failed to analyze document", "red"))
+                    return
+            
+            # Find similar pages with custom threshold
+            self.root.after(0, lambda: self.update_status("Comparing page structures with AI...", "orange"))
+            result = self.smart_selector.find_similar_pages(example_pages, threshold)
+            
+            # Update UI in main thread
+            self.root.after(0, self._apply_smart_selection_result, result)
+            
+        except Exception as e:
+            self.root.after(0, lambda: self.update_status(f"AI analysis error: {str(e)}", "red"))
+    
+    def _apply_smart_selection_result(self, result: 'SelectionResult'):
+        """Apply smart selection result to UI with enhanced feedback"""
+        try:
+            if result.selected_pages:
+                # Keep example pages and add similar pages (don't clear examples)
+                # The result.selected_pages already excludes the examples, so we just add them
+                self.selected_pages.update(result.selected_pages)
+                
+                # Update visual feedback
+                self.update_visual_feedback()
+                self.update_selection_info()
+                
+                # Show enhanced smart selection info
+                avg_confidence = sum(result.confidence_scores) / len(result.confidence_scores) if result.confidence_scores else 0
+                max_confidence = max(result.confidence_scores) if result.confidence_scores else 0
+                min_confidence = min(result.confidence_scores) if result.confidence_scores else 0
+                
+                info_text = (f"🤖 AI Found: {len(result.selected_pages)} pages\n"
+                           f"Confidence: {avg_confidence:.0%} avg ({min_confidence:.0%}-{max_confidence:.0%})\n"
+                           f"Analysis time: {result.processing_time:.1f}s")
+                self.smart_info_label.config(text=info_text)
+                
+                # Enhanced status message
+                features_text = ", ".join(result.features_found) if result.features_found else "similar structure"
+                status_msg = f"AI analysis complete: Found {len(result.selected_pages)} pages with {features_text}"
+                self.update_status(status_msg, "green")
+                
+                # Enable clear button
+                self.clear_smart_btn.config(state="normal")
+            else:
+                self.smart_info_label.config(text="🤖 No matching pages found\nTry lowering similarity threshold")
+                self.update_status("AI analysis: No pages match the selected examples", "orange")
+                
+        except Exception as e:
+            self.update_status(f"Error applying AI analysis results: {str(e)}", "red")
+    
+    def clear_smart_selection(self):
+        """Clear smart selection and return to manual mode"""
+        self.selected_pages.clear()
+        self.update_visual_feedback()
+        self.update_selection_info()
+        self.smart_info_label.config(text="")
+        self.update_status("Smart selection cleared", "green")
+        self.clear_smart_btn.config(state="disabled")
             
     def save_pdf(self):
         if not self.selected_pages:
