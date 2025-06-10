@@ -113,4 +113,12 @@ dmypy.json
 test_files/
 temp/
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Keep the main executable in root
+!PDF_Page_Modifier.exe 

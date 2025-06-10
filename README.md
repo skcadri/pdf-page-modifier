@@ -26,6 +26,18 @@ A powerful desktop application for PDF page management with dual-mode functional
 
 ## Installation
 
+### 🚀 **Option 1: Ready-to-Run Executable (Recommended)**
+
+**For users who just want to use the application:**
+
+1. **Download** the repository
+2. **Run** `PDF_Page_Modifier.exe` directly
+3. **No installation required!** No Python, no dependencies, just double-click and go!
+
+### 🛠️ **Option 2: Run from Source Code**
+
+**For developers or users who want to modify the code:**
+
 1. **Clone or download this repository** to your local machine
 
 2. **Install Python dependencies**:
@@ -33,31 +45,51 @@ A powerful desktop application for PDF page management with dual-mode functional
    pip install -r requirements.txt
    ```
 
-   That's it! No additional system dependencies required.
+3. **Run the application**:
+   ```bash
+   python pdf_page_modifier.py
+   ```
+
+### 🔧 **Option 3: Build Your Own Executable**
+
+**To create your own executable:**
+
+1. **Install dependencies** as in Option 2
+2. **Run the build script**:
+   ```bash
+   build_executable.bat
+   ```
+3. **Find your executable** in the `dist/` folder
 
 ## Usage
 
+### 🖱️ **Using the Executable (Easiest)**
+1. **Double-click** `PDF_Page_Modifier.exe`
+
+### 💻 **Using Python Source Code**
 1. **Run the application**:
    ```bash
    python pdf_page_modifier.py
    ```
 
-2. **Load a PDF file**:
+### 📋 **Application Steps**
+
+1. **Load a PDF file**:
    - Click the "Load PDF File" button
    - Select your PDF file from the file browser
    - Wait for page thumbnails to generate
 
-3. **Choose your mode**:
+2. **Choose your mode**:
    - **🔴 Remove Selected Pages**: Select pages to remove (red borders)
    - **🟢 Keep Selected Pages**: Select pages to keep (green borders)
 
-4. **Select pages**:
+3. **Select pages**:
    - Click on page thumbnails to select/deselect them
    - Selected pages show colored borders matching your chosen mode
    - Use "Select All Pages" to select all pages
    - Use "Clear Selection" to deselect all pages
 
-5. **Save and access your PDF**:
+4. **Save and access your PDF**:
    - Click "Save Modified PDF" button
    - Choose a location and filename for the new PDF
    - **Instantly open** the created PDF with the "📂 Open PDF" button
