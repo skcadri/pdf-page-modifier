@@ -2,6 +2,8 @@
 
 A powerful desktop application for PDF page management with dual-mode functionality. Easily remove unwanted pages or extract specific pages from PDF files through an intuitive graphical interface with visual page previews.
 
+![image](https://github.com/user-attachments/assets/df2a1e22-1800-41bc-beee-854a930a5a50)
+
 ## Features
 
 - **🎯 Dual-Mode Operation**: 
@@ -60,6 +62,9 @@ A powerful desktop application for PDF page management with dual-mode functional
    - Choose a location and filename for the new PDF
    - **Instantly open** the created PDF with the "📂 Open PDF" button
    - **Or show in folder** with the "📁 Show in Folder" button
+  
+     ![image](https://github.com/user-attachments/assets/dd8ac35a-2d1f-48b3-a29c-bb33b94cf3b9)
+
 
 ## Interface Overview
 
